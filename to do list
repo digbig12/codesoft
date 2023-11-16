@@ -1,13 +1,11 @@
 
 from tkinter import *
 
-
 root = Tk()
 root.title('To-Do List')
 root.geometry('300x400')
 root.resizable(0, 0)
 root.config(bg='PaleVioletRed')
-
 
 Label(root, text='To-Do List', bg='PaleVioletRed', font=("Comic Sans MS", 15), wraplength=300).place(x=35, y=0)
 
