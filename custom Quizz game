@@ -1,126 +1,421 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { motion } from 'framer-motion';
 
+// Advanced QuizApp - single-file React component
 export default function QuizApp() {
-  const [mode, setMode] = useState('home'); // home | create | play | result
-  const [questions, setQuestions] = useState([]);
-  const [currentQuestion, setCurrentQuestion] = useState(0);
+  // UI state
+  const [mode, setMode] = useState('home'); // home | create | play | result | review | leaderboard | import
+  const [category, setCategory] = useState('Indian History');
+  const [categories, setCategories] = useState(() => {
+    const saved = localStorage.getItem('quizCategories');
+    return saved ? JSON.parse(saved) : ['Indian History', 'General Knowledge'];
+  });
+
+  // Question bank: default includes several Indian history Qs across difficulties
+  const defaultBank = {
+    'Indian History': [
+      { q: 'Who was the first Mughal Emperor of India?', a: ['Babur','Akbar','Humayun','Shah Jahan'], correct:0, difficulty:1 },
+      { q: 'In which year did the Revolt of 1857 take place?', a: ['1856','1857','1858','1859'], correct:1, difficulty:1 },
+      { q: 'Who wrote Arthashastra?', a: ['Chanakya','Kalidasa','Valmiki','Vatsyayana'], correct:0, difficulty:2 },
+      { q: 'Which emperor is known for rock edicts?', a: ['Ashoka','Chandragupta Maurya','Harsha','Samudragupta'], correct:0, difficulty:1 },
+      { q: 'Battle of Plassey was fought in?', a: ['1757','1761','1857','1772'], correct:0, difficulty:2 },
+      { q: 'Founder of Maurya Empire?', a: ['Chandragupta Maurya','Bindusara','Ashoka','Kanishka'], correct:0, difficulty:1 },
+      { q: 'Where was the Jallianwala Bagh massacre?', a: ['Amritsar','Delhi','Lucknow','Kolkata'], correct:0, difficulty:1 },
+      { q: 'Who led the Dandi March in 1930?', a: ['Mahatma Gandhi','Subhas Chandra Bose','Bhagat Singh','Jawaharlal Nehru'], correct:0, difficulty:1 },
+      { q: 'When did India become a Republic?', a: ['15 Aug 1947','26 Jan 1950','2 Oct 1950','26 Nov 1949'], correct:1, difficulty:1 },
+      { q: 'Which dynasty built the Sun Temple at Konark?', a: ['Ganga','Chola','Pallava','Hoysala'], correct:0, difficulty:3 }
+    ],
+    'General Knowledge': [
+      { q: 'What is the capital of France?', a: ['Paris','Madrid','Berlin','Rome'], correct:0, difficulty:1 },
+      { q: 'What is H2O commonly known as?', a: ['Salt','Water','Oxygen','Hydrogen'], correct:1, difficulty:1 }
+    ]
+  };
+
+  const [questionBank, setQuestionBank] = useState(() => {
+    const saved = localStorage.getItem('questionBank');
+    return saved ? JSON.parse(saved) : defaultBank;
+  });
+
+  // Play state
+  const [shuffledQuestions, setShuffledQuestions] = useState([]);
+  const [currentIndex, setCurrentIndex] = useState(0);
   const [score, setScore] = useState(0);
   const [userAnswers, setUserAnswers] = useState([]);
+  const [timerPerQuestion, setTimerPerQuestion] = useState(20);
+  const [timeLeft, setTimeLeft] = useState(timerPerQuestion);
+  const [showTimer, setShowTimer] = useState(true);
 
- 
-  const [newQuestion, setNewQuestion] = useState('');
-  const [options, setOptions] = useState(['', '', '', '']);
-  const [correctIndex, setCorrectIndex] = useState(null);
+  // Difficulty system
+  const [difficultyLevel, setDifficultyLevel] = useState(1); // increases with correct answers
 
-  
-  const addQuestion = () => {
-    if (!newQuestion || correctIndex === null) return alert('Please fill all fields');
-    setQuestions([...questions, { question: newQuestion, options, correctIndex }]);
-    setNewQuestion('');
-    setOptions(['', '', '', '']);
-    setCorrectIndex(null);
-  };
+  // Power-ups
+  const [powerUps, setPowerUps] = useState(() => {
+    const saved = localStorage.getItem('powerUps');
+    return saved ? JSON.parse(saved) : { skip:1, fifty:1, extraTime:1 };
+  });
 
-  
-  const handleAnswer = (index) => {
-    const correct = index === questions[currentQuestion].correctIndex;
-    if (correct) setScore(score + 1);
-    setUserAnswers([...userAnswers, index]);
+  // Leaderboard (per category)
+  const [leaderboards, setLeaderboards] = useState(() => {
+    const saved = localStorage.getItem('leaderboards');
+    return saved ? JSON.parse(saved) : {};
+  });
 
-    if (currentQuestion + 1 < questions.length) {
-      setCurrentQuestion(currentQuestion + 1);
-    } else {
-      setMode('result');
+  // Create-mode form
+  const [newQ, setNewQ] = useState('');
+  const [newOpts, setNewOpts] = useState(['','','','']);
+  const [newCorrect, setNewCorrect] = useState(0);
+  const [newDifficulty, setNewDifficulty] = useState(1);
+
+  // UI refs
+  const confettiRef = useRef(null);
+  const audioRef = useRef(null);
+
+  // Persist data
+  useEffect(() => localStorage.setItem('questionBank', JSON.stringify(questionBank)), [questionBank]);
+  useEffect(() => localStorage.setItem('quizCategories', JSON.stringify(categories)), [categories]);
+  useEffect(() => localStorage.setItem('powerUps', JSON.stringify(powerUps)), [powerUps]);
+  useEffect(() => localStorage.setItem('leaderboards', JSON.stringify(leaderboards)), [leaderboards]);
+
+  // Timer effect
+  useEffect(() => {
+    if (mode !== 'play' || !showTimer) return;
+    if (timeLeft <= 0) {
+      handleAnswer(-1); // time out
+      return;
     }
+    const id = setTimeout(() => setTimeLeft(timeLeft-1), 1000);
+    return () => clearTimeout(id);
+  }, [timeLeft, mode, showTimer]);
+
+  // Helper: simple sound using WebAudio
+  const playSound = (type='click') => {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.connect(g); g.connect(ctx.destination);
+      if (type === 'correct') { o.type='sine'; o.frequency.value=880; }
+      else if (type === 'wrong') { o.type='sawtooth'; o.frequency.value=220; }
+      else { o.type='square'; o.frequency.value=440; }
+      o.start();
+      g.gain.setValueAtTime(0.0001, ctx.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.2, ctx.currentTime + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.15);
+      setTimeout(() => { o.stop(); ctx.close(); }, 200);
+    } catch (e) { /* ignore on unsupported browsers */ }
   };
 
-  const resetGame = () => {
-    setCurrentQuestion(0);
+  // Confetti simple implementation using canvas
+  const fireConfetti = () => {
+    const canvas = confettiRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const w = canvas.width = window.innerWidth;
+    const h = canvas.height = window.innerHeight;
+    const pieces = 120;
+    const items = [];
+    for (let i=0;i<pieces;i++) items.push({x:Math.random()*w,y:Math.random()*-h*2,vy:Math.random()*4+2, size:Math.random()*6+4, color:`hsl(${Math.random()*360},80%,60%)`});
+    let t=0;
+    function loop(){
+      ctx.clearRect(0,0,w,h);
+      items.forEach(p=>{ p.y += p.vy; p.x += Math.sin(t/10 + p.size)*2; ctx.fillStyle=p.color; ctx.fillRect(p.x,p.y,p.size,p.size); });
+      t++;
+      if (t<200) requestAnimationFrame(loop);
+      else ctx.clearRect(0,0,w,h);
+    }
+    loop();
+  };
+
+  // Start quiz: select questions based on difficulty and category
+  const startQuiz = ({selectedCategory=category, numQuestions=10} = {}) => {
+    const bank = questionBank[selectedCategory] || [];
+    if (bank.length === 0) return alert('No questions in this category. Add some first.');
+    // Adaptive: pick questions weighted by difficulty around difficultyLevel
+    const weighted = bank.sort(() => Math.random()-0.5).slice(0); // shallow copy
+    // simple selection: prefer near difficultyLevel
+    weighted.sort((a,b)=> Math.abs(a.difficulty - difficultyLevel) - Math.abs(b.difficulty - difficultyLevel));
+    const selected = weighted.slice(0, Math.min(numQuestions, weighted.length)).map(q=>({ ...q }));
+    // shuffle answers for each question and keep track of correct index
+    const prepared = selected.map(q=>{
+      const arr = q.a.map((t,i)=>({t,i}));
+      const shuffledArr = arr.sort(() => Math.random()-0.5);
+      const newCorrect = shuffledArr.findIndex(x => x.i === q.correct);
+      return { question: q.q, options: shuffledArr.map(x=>x.t), correctIndex: newCorrect, difficulty: q.difficulty };
+    });
+    setShuffledQuestions(prepared);
+    setCurrentIndex(0);
     setScore(0);
     setUserAnswers([]);
-    setMode('home');
+    setTimeLeft(timerPerQuestion);
+    setShowTimer(true);
+    setMode('play');
   };
 
+  const handleAnswer = (idx) => {
+    const q = shuffledQuestions[currentIndex];
+    const correct = idx === q.correctIndex;
+    setUserAnswers(prev=>[...prev, idx]);
+    if (correct) {
+      setScore(s => s+1);
+      setDifficultyLevel(d => Math.min(5, d + 0.2));
+      playSound('correct');
+    } else {
+      setDifficultyLevel(d => Math.max(1, d - 0.2));
+      playSound('wrong');
+    }
+
+    // small delay to show feedback
+    setShowTimer(false);
+    setTimeout(()=>{
+      setShowTimer(true);
+      if (currentIndex +1 < shuffledQuestions.length) {
+        setCurrentIndex(i => i+1);
+        setTimeLeft(timerPerQuestion);
+      } else {
+        // finished
+        setMode('result');
+        fireConfetti();
+      }
+    }, 350);
+  };
+
+  // Power-ups
+  const useSkip = () => {
+    if (powerUps.skip <= 0) return alert('No skips left');
+    setPowerUps(p => ({...p, skip: p.skip-1}));
+    // count as unanswered
+    setUserAnswers(prev=>[...prev, -2]);
+    if (currentIndex +1 < shuffledQuestions.length) setCurrentIndex(i=>i+1);
+    else { setMode('result'); fireConfetti(); }
+  };
+  const useFifty = () => {
+    if (powerUps.fifty <= 0) return alert('No 50/50 left');
+    setPowerUps(p=>({...p, fifty: p.fifty-1}));
+    // hide two wrong answers by marking them in a state — simple approach: store in q._hidden
+    const q = shuffledQuestions[currentIndex];
+    const wrongs = q.options.map((o,i)=>i).filter(i=>i!==q.correctIndex).sort(()=>Math.random()-0.5).slice(0,2);
+    q._hidden = wrongs;
+    setShuffledQuestions([...shuffledQuestions]);
+  };
+  const useExtraTime = () => {
+    if (powerUps.extraTime <= 0) return alert('No extra time left');
+    setPowerUps(p=>({...p, extraTime: p.extraTime-1}));
+    setTimeLeft(t=>t + 10);
+  };
+
+  // Save question (create mode)
+  const saveNewQuestion = () => {
+    if (!newQ || newOpts.some(o=>!o)) return alert('Fill all fields');
+    const payload = { q: newQ, a: newOpts, correct: newCorrect, difficulty: newDifficulty };
+    setQuestionBank(prev => ({ ...prev, [category]: [...(prev[category]||[]), payload] }));
+    setNewQ(''); setNewOpts(['','','','']); setNewCorrect(0); setNewDifficulty(1);
+    alert('Question saved to category: ' + category);
+  };
+
+  // Leaderboard submit
+  const submitScore = (name) => {
+    const catLb = leaderboards[category] || [];
+    const entry = { name: name || 'Anonymous', score, date: new Date().toISOString() };
+    const updated = [...catLb, entry].sort((a,b)=>b.score - a.score).slice(0,10);
+    setLeaderboards(prev => ({ ...prev, [category]: updated }));
+    setMode('leaderboard');
+  };
+
+  // Import/export
+  const exportBank = () => {
+    const blob = new Blob([JSON.stringify(questionBank, null, 2)], {type:'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = 'quiz_bank.json'; a.click(); URL.revokeObjectURL(url);
+  };
+  const importBank = (file) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const obj = JSON.parse(e.target.result);
+        setQuestionBank(obj);
+        setCategories(Object.keys(obj));
+        alert('Imported successfully');
+      } catch (err) { alert('Invalid JSON file'); }
+    };
+    reader.readAsText(file);
+  };
+
+  // UI small helpers
+  const progressPct = shuffledQuestions.length ? Math.round((currentIndex / shuffledQuestions.length) * 100) : 0;
+
+  // Responsive layout & small components inline
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-indigo-100 to-purple-200 p-6">
-      <h1 className="text-4xl font-bold mb-6 text-indigo-700">🎯 Custom Quiz Game</h1>
-
-      {mode === 'home' && (
-        <div className="flex flex-col gap-4">
-          <button onClick={() => setMode('create')} className="px-6 py-3 bg-indigo-600 text-white rounded-xl shadow">Create a Quiz</button>
-          <button onClick={() => (questions.length ? setMode('play') : alert('Create a quiz first!'))} className="px-6 py-3 bg-green-600 text-white rounded-xl shadow">Play Quiz</button>
-        </div>
-      )}
-
-      {mode === 'create' && (
-        <div className="bg-white p-6 rounded-2xl shadow-xl w-full max-w-lg">
-          <h2 className="text-2xl font-semibold mb-4">Create Quiz Questions</h2>
-          <input
-            className="border w-full p-2 rounded mb-3"
-            type="text"
-            placeholder="Enter your question"
-            value={newQuestion}
-            onChange={(e) => setNewQuestion(e.target.value)}
-          />
-
-          {options.map((opt, i) => (
-            <div key={i} className="flex items-center gap-2 mb-2">
-              <input
-                type="text"
-                className="border p-2 w-full rounded"
-                placeholder={`Option ${i + 1}`}
-                value={opt}
-                onChange={(e) => {
-                  const newOpts = [...options];
-                  newOpts[i] = e.target.value;
-                  setOptions(newOpts);
-                }}
-              />
-              <input
-                type="radio"
-                name="correct"
-                checked={correctIndex === i}
-                onChange={() => setCorrectIndex(i)}
-              />
-              <label>Correct</label>
+    <div className="min-h-screen p-4 bg-gradient-to-br from-slate-50 to-sky-50 flex flex-col items-center">
+      <canvas ref={confettiRef} className="pointer-events-none fixed inset-0 z-40" />
+      <div className="w-full max-w-4xl">
+        <motion.header initial={{y:-20, opacity:0}} animate={{y:0, opacity:1}} className="mb-6">
+          <div className="flex items-center justify-between">
+            <h1 className="text-3xl font-extrabold">🏆 Quiz Master</h1>
+            <div className="flex items-center gap-3">
+              <select value={category} onChange={(e)=>setCategory(e.target.value)} className="border p-2 rounded">
+                {categories.map(c=> <option key={c} value={c}>{c}</option>)}
+              </select>
+              <button onClick={()=>{ const name=prompt('New category name'); if(name){ setCategories(cs=>[...cs,name]); setQuestionBank(qb=>({...qb, [name]:[]})); setCategory(name); } }} className="px-3 py-2 bg-indigo-600 text-white rounded">+ Category</button>
+              <button onClick={()=>setMode('import')} className="px-3 py-2 bg-gray-200 rounded">Import/Export</button>
             </div>
-          ))}
-
-          <div className="flex gap-3 mt-4">
-            <button onClick={addQuestion} className="px-4 py-2 bg-indigo-600 text-white rounded">Add Question</button>
-            <button onClick={() => setMode('home')} className="px-4 py-2 bg-gray-400 text-white rounded">Back</button>
           </div>
+        </motion.header>
 
-          {questions.length > 0 && (
-            <div className="mt-4 text-sm text-gray-600">{questions.length} question(s) added ✅</div>
-          )}
-        </div>
-      )}
+        {mode === 'home' && (
+          <motion.div initial={{opacity:0}} animate={{opacity:1}} className="bg-white rounded-xl shadow p-6">
+            <p className="mb-4 text-gray-700">Category: <strong>{category}</strong> · Questions: <strong>{(questionBank[category]||[]).length}</strong></p>
+            <div className="flex gap-3 flex-wrap">
+              <button onClick={()=>startQuiz({selectedCategory:category, numQuestions:10})} className="px-4 py-2 bg-green-600 text-white rounded">Play (10)</button>
+              <button onClick={()=>startQuiz({selectedCategory:category, numQuestions:20})} className="px-4 py-2 bg-green-500 text-white rounded">Play (20)</button>
+              <button onClick={()=>setMode('create')} className="px-4 py-2 bg-orange-500 text-white rounded">Add Question</button>
+              <button onClick={()=>setMode('leaderboard')} className="px-4 py-2 bg-yellow-500 text-white rounded">Leaderboard</button>
+              <button onClick={exportBank} className="px-4 py-2 bg-slate-200 rounded">Export Bank</button>
+            </div>
 
-      {mode === 'play' && questions.length > 0 && (
-        <div className="bg-white p-6 rounded-2xl shadow-xl w-full max-w-lg">
-          <h2 className="text-xl font-semibold mb-3">Question {currentQuestion + 1}/{questions.length}</h2>
-          <p className="text-lg mb-4">{questions[currentQuestion].question}</p>
+            <div className="mt-6 bg-slate-100 p-4 rounded">
+              <h3 className="font-semibold mb-2">Power-Ups</h3>
+              <div className="flex gap-3">
+                <div className="px-3 py-2 bg-white rounded shadow">Skip: {powerUps.skip}</div>
+                <div className="px-3 py-2 bg-white rounded shadow">50/50: {powerUps.fifty}</div>
+                <div className="px-3 py-2 bg-white rounded shadow">Extra Time: {powerUps.extraTime}</div>
+              </div>
+            </div>
 
-          {questions[currentQuestion].options.map((opt, i) => (
-            <button
-              key={i}
-              onClick={() => handleAnswer(i)}
-              className="block w-full text-left px-4 py-2 border rounded mb-2 hover:bg-indigo-100"
-            >
-              {opt}
-            </button>
-          ))}
-        </div>
-      )}
+          </motion.div>
+        )}
 
-      {mode === 'result' && (
-        <div className="bg-white p-6 rounded-2xl shadow-xl w-full max-w-lg text-center">
-          <h2 className="text-2xl font-bold mb-4">🎉 Quiz Completed!</h2>
-          <p className="text-lg mb-4">Your Score: {score}/{questions.length}</p>
-          <button onClick={resetGame} className="px-6 py-3 bg-indigo-600 text-white rounded-xl shadow">Play Again / Home</button>
-        </div>
-      )}
+        {mode === 'create' && (
+          <motion.div initial={{x:20, opacity:0}} animate={{x:0, opacity:1}} className="bg-white rounded-xl shadow p-6 mt-4">
+            <h2 className="text-xl font-semibold mb-3">Add a Question to {category}</h2>
+            <input value={newQ} onChange={e=>setNewQ(e.target.value)} placeholder="Question text" className="w-full border p-2 rounded mb-3" />
+            {newOpts.map((o,i)=>(
+              <div key={i} className="flex gap-2 items-center mb-2">
+                <input value={o} onChange={e=>{ const arr=[...newOpts]; arr[i]=e.target.value; setNewOpts(arr); }} className="border p-2 w-full rounded" placeholder={`Option ${i+1}`} />
+                <label className="text-sm">Correct</label>
+                <input type="radio" checked={newCorrect===i} onChange={()=>setNewCorrect(i)} />
+              </div>
+            ))}
+            <div className="flex items-center gap-3 mt-2">
+              <label>Difficulty:</label>
+              <select value={newDifficulty} onChange={e=>setNewDifficulty(Number(e.target.value))} className="border p-1 rounded">
+                <option value={1}>Easy</option>
+                <option value={2}>Medium</option>
+                <option value={3}>Hard</option>
+              </select>
+            </div>
+            <div className="flex gap-3 mt-4">
+              <button onClick={saveNewQuestion} className="px-4 py-2 bg-orange-600 text-white rounded">Save</button>
+              <button onClick={()=>setMode('home')} className="px-4 py-2 bg-gray-200 rounded">Cancel</button>
+            </div>
+          </motion.div>
+        )}
+
+        {mode === 'import' && (
+          <div className="bg-white rounded-xl shadow p-6 mt-4">
+            <h2 className="text-xl font-semibold mb-3">Import / Export Quiz Bank</h2>
+            <input type="file" accept="application/json" onChange={e=>{ if(e.target.files[0]) importBank(e.target.files[0]); }} />
+            <div className="mt-4">
+              <button onClick={exportBank} className="px-4 py-2 bg-slate-200 rounded">Export as JSON</button>
+              <button onClick={()=>setMode('home')} className="ml-2 px-4 py-2 bg-gray-200 rounded">Back</button>
+            </div>
+          </div>
+        )}
+
+        {mode === 'play' && shuffledQuestions.length > 0 && (
+          <div className="bg-white rounded-xl shadow p-6 mt-4 relative">
+            <div className="flex justify-between items-center mb-3">
+              <div className="text-sm text-gray-600">Category: {category} · Difficulty ~ {difficultyLevel.toFixed(1)}</div>
+              <div className="text-sm">Score: {score}</div>
+            </div>
+
+            <div className="w-full bg-slate-200 h-2 rounded overflow-hidden mb-3">
+              <div style={{width:`${progressPct}%`}} className="h-full bg-gradient-to-r from-green-400 to-blue-500 transition-all" />
+            </div>
+
+            <h3 className="text-lg font-semibold">Q{currentIndex+1}: {shuffledQuestions[currentIndex].question}</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+              {shuffledQuestions[currentIndex].options.map((opt,i)=>{
+                const hidden = shuffledQuestions[currentIndex]._hidden && shuffledQuestions[currentIndex]._hidden.includes(i);
+                return (
+                  <button key={i} disabled={hidden} onClick={()=>handleAnswer(i)} className={`p-3 text-left border rounded ${hidden? 'opacity-40 line-through':''}`}>
+                    {opt}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="flex items-center justify-between mt-4">
+              <div className="flex gap-2">
+                <button onClick={useSkip} className="px-3 py-2 bg-gray-100 rounded">Skip</button>
+                <button onClick={useFifty} className="px-3 py-2 bg-gray-100 rounded">50/50</button>
+                <button onClick={useExtraTime} className="px-3 py-2 bg-gray-100 rounded">+10s</button>
+              </div>
+              <div className="flex items-center gap-2">
+                {showTimer && <div className="text-sm">⏳ {timeLeft}s</div>}
+                <button onClick={()=>{ setShowTimer(s=>!s); }} className="px-3 py-2 bg-slate-200 rounded">Pause Timer</button>
+              </div>
+            </div>
+
+          </div>
+        )}
+
+        {mode === 'result' && (
+          <div className="bg-white rounded-xl shadow p-6 mt-4 text-center">
+            <h2 className="text-2xl font-bold">Quiz Complete 🎉</h2>
+            <p className="mt-2">Your Score: <strong>{score}</strong> / {shuffledQuestions.length}</p>
+            <div className="mt-4">
+              <input placeholder="Enter name for leaderboard" id="playerName" className="border p-2 rounded mr-2" />
+              <button onClick={()=>submitScore(document.getElementById('playerName').value)} className="px-4 py-2 bg-yellow-500 rounded">Submit Score</button>
+            </div>
+            <div className="mt-4 flex gap-2 justify-center">
+              <button onClick={()=>{ setMode('review'); }} className="px-4 py-2 bg-indigo-600 text-white rounded">Review Answers</button>
+              <button onClick={()=>{ setMode('home'); }} className="px-4 py-2 bg-gray-200 rounded">Home</button>
+            </div>
+          </div>
+        )}
+
+        {mode === 'review' && (
+          <div className="bg-white rounded-xl shadow p-6 mt-4">
+            <h2 className="text-xl font-semibold mb-3">Review</h2>
+            {shuffledQuestions.map((q,qi)=> (
+              <div key={qi} className="border-b py-3">
+                <div className="font-semibold">Q{qi+1}: {q.question}</div>
+                <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2">
+                  {q.options.map((o,oi)=>{
+                    const user = userAnswers[qi];
+                    const isCorrect = oi === q.correctIndex;
+                    const isChosen = user === oi;
+                    return (
+                      <div key={oi} className={`p-2 rounded ${isCorrect? 'bg-green-100 border-green-300' : isChosen? 'bg-red-100 border-red-300' : 'bg-slate-50'}`}>
+                        {o} {isCorrect && <span className="ml-2 font-semibold">(Correct)</span>} {isChosen && !isCorrect && <span className="ml-2 font-semibold">(Your choice)</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+            <div className="mt-4 text-center">
+              <button onClick={()=>setMode('home')} className="px-4 py-2 bg-indigo-600 text-white rounded">Back Home</button>
+            </div>
+          </div>
+        )}
+
+        {mode === 'leaderboard' && (
+          <div className="bg-white rounded-xl shadow p-6 mt-4">
+            <h2 className="text-xl font-semibold">Leaderboard - {category}</h2>
+            <ol className="mt-3 space-y-2">
+              {(leaderboards[category]||[]).map((e, i)=> (
+                <li key={i} className="flex justify-between p-2 border rounded"> <span>{i+1}. {e.name}</span> <span>{e.score}</span> </li>
+              ))}
+            </ol>
+            <div className="mt-4 flex gap-2">
+              <button onClick={()=>setMode('home')} className="px-4 py-2 bg-gray-200 rounded">Back</button>
+              <button onClick={()=>{ setLeaderboards(lb=>({ ...lb, [category]: [] })); alert('Cleared leaderboard for '+category); }} className="px-4 py-2 bg-red-400 text-white rounded">Clear</button>
+            </div>
+          </div>
+        )}
+
+      </div>
     </div>
   );
 }
