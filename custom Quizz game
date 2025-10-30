@@ -1,0 +1,126 @@
+import React, { useState } from 'react';
+
+export default function QuizApp() {
+  const [mode, setMode] = useState('home'); // home | create | play | result
+  const [questions, setQuestions] = useState([]);
+  const [currentQuestion, setCurrentQuestion] = useState(0);
+  const [score, setScore] = useState(0);
+  const [userAnswers, setUserAnswers] = useState([]);
+
+ 
+  const [newQuestion, setNewQuestion] = useState('');
+  const [options, setOptions] = useState(['', '', '', '']);
+  const [correctIndex, setCorrectIndex] = useState(null);
+
+  
+  const addQuestion = () => {
+    if (!newQuestion || correctIndex === null) return alert('Please fill all fields');
+    setQuestions([...questions, { question: newQuestion, options, correctIndex }]);
+    setNewQuestion('');
+    setOptions(['', '', '', '']);
+    setCorrectIndex(null);
+  };
+
+  
+  const handleAnswer = (index) => {
+    const correct = index === questions[currentQuestion].correctIndex;
+    if (correct) setScore(score + 1);
+    setUserAnswers([...userAnswers, index]);
+
+    if (currentQuestion + 1 < questions.length) {
+      setCurrentQuestion(currentQuestion + 1);
+    } else {
+      setMode('result');
+    }
+  };
+
+  const resetGame = () => {
+    setCurrentQuestion(0);
+    setScore(0);
+    setUserAnswers([]);
+    setMode('home');
+  };
+
+  return (
+    <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-indigo-100 to-purple-200 p-6">
+      <h1 className="text-4xl font-bold mb-6 text-indigo-700">🎯 Custom Quiz Game</h1>
+
+      {mode === 'home' && (
+        <div className="flex flex-col gap-4">
+          <button onClick={() => setMode('create')} className="px-6 py-3 bg-indigo-600 text-white rounded-xl shadow">Create a Quiz</button>
+          <button onClick={() => (questions.length ? setMode('play') : alert('Create a quiz first!'))} className="px-6 py-3 bg-green-600 text-white rounded-xl shadow">Play Quiz</button>
+        </div>
+      )}
+
+      {mode === 'create' && (
+        <div className="bg-white p-6 rounded-2xl shadow-xl w-full max-w-lg">
+          <h2 className="text-2xl font-semibold mb-4">Create Quiz Questions</h2>
+          <input
+            className="border w-full p-2 rounded mb-3"
+            type="text"
+            placeholder="Enter your question"
+            value={newQuestion}
+            onChange={(e) => setNewQuestion(e.target.value)}
+          />
+
+          {options.map((opt, i) => (
+            <div key={i} className="flex items-center gap-2 mb-2">
+              <input
+                type="text"
+                className="border p-2 w-full rounded"
+                placeholder={`Option ${i + 1}`}
+                value={opt}
+                onChange={(e) => {
+                  const newOpts = [...options];
+                  newOpts[i] = e.target.value;
+                  setOptions(newOpts);
+                }}
+              />
+              <input
+                type="radio"
+                name="correct"
+                checked={correctIndex === i}
+                onChange={() => setCorrectIndex(i)}
+              />
+              <label>Correct</label>
+            </div>
+          ))}
+
+          <div className="flex gap-3 mt-4">
+            <button onClick={addQuestion} className="px-4 py-2 bg-indigo-600 text-white rounded">Add Question</button>
+            <button onClick={() => setMode('home')} className="px-4 py-2 bg-gray-400 text-white rounded">Back</button>
+          </div>
+
+          {questions.length > 0 && (
+            <div className="mt-4 text-sm text-gray-600">{questions.length} question(s) added ✅</div>
+          )}
+        </div>
+      )}
+
+      {mode === 'play' && questions.length > 0 && (
+        <div className="bg-white p-6 rounded-2xl shadow-xl w-full max-w-lg">
+          <h2 className="text-xl font-semibold mb-3">Question {currentQuestion + 1}/{questions.length}</h2>
+          <p className="text-lg mb-4">{questions[currentQuestion].question}</p>
+
+          {questions[currentQuestion].options.map((opt, i) => (
+            <button
+              key={i}
+              onClick={() => handleAnswer(i)}
+              className="block w-full text-left px-4 py-2 border rounded mb-2 hover:bg-indigo-100"
+            >
+              {opt}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {mode === 'result' && (
+        <div className="bg-white p-6 rounded-2xl shadow-xl w-full max-w-lg text-center">
+          <h2 className="text-2xl font-bold mb-4">🎉 Quiz Completed!</h2>
+          <p className="text-lg mb-4">Your Score: {score}/{questions.length}</p>
+          <button onClick={resetGame} className="px-6 py-3 bg-indigo-600 text-white rounded-xl shadow">Play Again / Home</button>
+        </div>
+      )}
+    </div>
+  );
+}
